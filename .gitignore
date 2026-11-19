@@ -1,0 +1,19 @@
+# Python / Backend
+backend/venv/
+**/__pycache__/
+*.pyc
+.env
+
+# Engine binaries & weights (too large for Git; document download in README)
+backend/engines/*.exe
+backend/engines/*.dll
+backend/engines/*.pb.gz
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Misc / Local scratch files
+tree.txt
+.DS_Store
