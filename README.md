@@ -28,12 +28,13 @@ online accounts.
   phase, and save timestamp.
 - Safe restoration of saved games after a page reload.
 - Explicit **Resume Maia Move** recovery when a reload occurs during Maia's turn.
+- **Clear Saved Game** removes `maia_chess_saved_game_v1` without interrupting the
+  active board or Maia request, then shows a dismissible **Saved game cleared.**
+  confirmation. Storage failures show non-blocking warnings.
 - **New Game** cancels active timers/requests, clears saved data, and returns to
   setup.
-
-The standalone **Clear Saved Game** action that keeps the active board visible and
-shows a confirmation is planned for Step 2.1.3. Currently, New Game performs the
-reset and clearing behavior.
+- Storage constants and persistence helpers are extracted into
+  `frontend/src/utils/gameStorage.js`.
 
 ## Project structure
 
@@ -46,12 +47,21 @@ maia-chess-app/
 │   │   ├── maia-1500.pb.gz
 │   │   └── maia-1900.pb.gz
 │   ├── main.py
-│   └── requirements.txt
+│   ├── requirements.txt
+│   ├── requirements-dev.txt
+│   └── tests/
 ├── frontend/
 │   ├── src/
 │   │   ├── App.jsx
+│   │   ├── test/
+│   │   │   ├── setup.js
+│   │   │   ├── smoke.test.js
+│   │   │   ├── gameStorage.test.js
+│   │   │   └── App.gameplay.test.jsx
 │   │   ├── index.css
-│   │   └── main.jsx
+│   │   ├── main.jsx
+│   │   └── utils/
+│   │       └── gameStorage.js
 │   ├── package.json
 │   └── package-lock.json
 └── README.md
@@ -186,6 +196,20 @@ Transient request state, timers, abort controllers, and thinking state are not
 stored. When a saved game is restored during Maia's turn, the app waits for an
 explicit **Resume Maia Move** action to avoid duplicate requests.
 
+## Phase 2.1 verification
+
+The final manual refresh/resume matrix was verified in the local browser for:
+
+- Fresh setup with no saved snapshot.
+- White-turn reload with Elo, orientation, move history, and status restored.
+- Maia-turn reload showing **Resume Maia Move** without an automatic duplicate
+  request, followed by a successful resumed move.
+- Black opening reload with the opening move and Black orientation preserved.
+- Clear Saved Game retaining the active board and removing the storage snapshot.
+- New Game cancelling/resetting the session and returning to setup.
+- Corrupted JSON recovery returning to setup, removing the bad entry, and showing
+  a storage warning.
+
 ## Validation commands
 
 Frontend, from `frontend/`:
@@ -193,12 +217,14 @@ Frontend, from `frontend/`:
 ```powershell
 npm run lint
 npm run build
+npm test
 ```
 
 Backend, from the project root:
 
 ```powershell
 python -m py_compile backend\main.py
+.\backend\venv\Scripts\python.exe -m pytest backend
 ```
 
 ## Troubleshooting
@@ -246,14 +272,13 @@ Then update `VITE_API_URL` before starting the frontend.
 
 ## Current limitations: Phase 2.1 snapshot
 
-- A dedicated Clear Saved Game button is pending Step 2.1.3. New Game currently
-  performs the reset and storage-clearing behavior.
-- Storage serialization, validation, loading, and clearing still live in
-  `frontend/src/App.jsx`; extraction is planned for Step 2.1.4.
-- Vitest, React Testing Library, and pytest test suites are not yet installed.
 - Backend `/health` and `/ready` endpoints are not yet implemented.
-- Startup resource validation, bounded engine watchdogs, and crash recovery are
-  planned for Phase 2.2.
+- Startup resource validation, bounded search, weight-switch safeguards, engine
+  watchdogs, crash recovery, and backend modularization are planned for Phase 2.2.
+- Request timeouts, consistent API error parsing, duplicate-click guards, and
+  additional frontend accessibility hardening are planned for Phase 2.3.
+- Legacy `Appv*.jsx` backups remain in `frontend/src/` until the Phase 2.3 archive
+  step.
 - A one-command offline launcher is planned for Phase 2.4.
 - PGN import/export, clocks, sound effects, move analytics, and the Humanity
   Profiler are Phase 3 features.
