@@ -17,8 +17,10 @@ function assignPlayerColor(colorPreference) {
 function clearSavedGameStorage() {
   try {
     localStorage.removeItem(STORAGE_KEY);
+    return { ok: true };
   } catch (error) {
     console.error("Failed to clear saved game:", error);
+    return { ok: false, error };
   }
 }
 
@@ -30,6 +32,7 @@ function loadSavedGame() {
     playerColor: "white",
     gamePhase: "setup",
     needsMaiaResume: false,
+    storageWarning: null,
   };
 
   try {
@@ -46,8 +49,13 @@ function loadSavedGame() {
       !VALID_PLAYER_COLORS.includes(parsed.playerColor) ||
       typeof parsed.pgn !== "string"
     ) {
-      clearSavedGameStorage();
-      return defaultState;
+      const clearResult = clearSavedGameStorage();
+      return {
+        ...defaultState,
+        storageWarning: clearResult.ok
+          ? null
+          : "Could not clear saved game from local storage.",
+      };
     }
 
     const restoredGame = new Chess();
@@ -70,7 +78,10 @@ function loadSavedGame() {
   } catch (error) {
     console.error("Failed to restore saved game:", error);
     clearSavedGameStorage();
-    return defaultState;
+    return {
+      ...defaultState,
+      storageWarning: "Game could not be saved locally.",
+    };
   }
 }
 
@@ -86,11 +97,17 @@ export default function App() {
   const [selectedColorPref, setSelectedColorPref] = useState(initialState.selectedColorPref);
   const [playerColor, setPlayerColor] = useState(initialState.playerColor);
   const [needsMaiaResume, setNeedsMaiaResume] = useState(initialState.needsMaiaResume);
+  const [storageFeedback, setStorageFeedback] = useState(
+    initialState.storageWarning
+      ? { text: initialState.storageWarning, type: "warning" }
+      : null
+  );
 
   const abortControllerRef = useRef(null);
   const moveTimeoutRef = useRef(null);
   const requestIdRef = useRef(0);
   const moveHistoryRef = useRef(null);
+  const hasMountedAutosaveRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -106,8 +123,13 @@ export default function App() {
     }
   }, [game]);
 
-  // Auto-save active games to localStorage
+  // Auto-save active games to localStorage after initial state restoration.
   useEffect(() => {
+    if (!hasMountedAutosaveRef.current) {
+      hasMountedAutosaveRef.current = true;
+      return;
+    }
+
     if (gamePhase !== "active") return;
 
     try {
@@ -123,6 +145,12 @@ export default function App() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch (error) {
       console.error("Failed to save game to localStorage:", error);
+      window.setTimeout(() => {
+        setStorageFeedback({
+          text: "Game could not be saved locally.",
+          type: "warning",
+        });
+      }, 0);
     }
   }, [game, elo, selectedColorPref, playerColor, gamePhase]);
 
@@ -172,6 +200,15 @@ export default function App() {
     return pairs;
   }
 
+  function clearSavedGame() {
+    const result = clearSavedGameStorage();
+    setStorageFeedback(
+      result.ok
+        ? { text: "Saved game cleared.", type: "info" }
+        : { text: "Could not clear saved game from local storage.", type: "warning" }
+    );
+  }
+
   function startGame() {
     const assignedColor = assignPlayerColor(selectedColorPref);
     const newGameState = new Chess();
@@ -186,6 +223,7 @@ export default function App() {
     setErrorMessage(null);
     setPendingPromotion(null);
     setNeedsMaiaResume(false);
+    setStorageFeedback(null);
 
     if (assignedColor === "black") {
       setIsThinking(true);
@@ -209,7 +247,7 @@ export default function App() {
       abortControllerRef.current = null;
     }
 
-    clearSavedGameStorage();
+    const clearResult = clearSavedGameStorage();
     setGame(new Chess());
     setGamePhase("setup");
     setPlayerColor("white");
@@ -217,6 +255,11 @@ export default function App() {
     setPendingPromotion(null);
     setErrorMessage(null);
     setNeedsMaiaResume(false);
+    setStorageFeedback(
+      clearResult.ok
+        ? null
+        : { text: "Could not clear saved game from local storage.", type: "warning" }
+    );
   }
 
   function retryMaiaMove() {
@@ -413,7 +456,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           {isSetup ? (
             <button
               onClick={startGame}
@@ -431,6 +474,12 @@ export default function App() {
                 {isThinking ? "⮌ Cancel & Undo" : "⮌ Undo Move"}
               </button>
               <button
+                onClick={clearSavedGame}
+                className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-sm font-medium px-3.5 py-1.5 rounded-lg transition cursor-pointer"
+              >
+                Clear Saved Game
+              </button>
+              <button
                 onClick={newGame}
                 className="bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 text-sm font-medium px-3.5 py-1.5 rounded-lg transition cursor-pointer"
               >
@@ -440,6 +489,25 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {storageFeedback && (
+        <div
+          className={`w-full max-w-4xl mb-4 px-4 py-2 rounded-xl border text-center text-xs sm:text-sm font-medium shadow-sm flex items-center justify-between gap-3 ${
+            storageFeedback.type === "warning"
+              ? "bg-amber-950/70 border-amber-800/80 text-amber-200"
+              : "bg-emerald-950/60 border-emerald-800/70 text-emerald-200"
+          }`}
+        >
+          <span className="mx-auto">{storageFeedback.text}</span>
+          <button
+            onClick={() => setStorageFeedback(null)}
+            aria-label="Dismiss storage message"
+            className="text-current opacity-70 hover:opacity-100 text-xs px-1.5 py-0.5 cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Error Banner */}
       {errorMessage && (
