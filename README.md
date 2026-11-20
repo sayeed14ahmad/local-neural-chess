@@ -1,59 +1,91 @@
 # Maia Chess Centaur
 
-A local, offline full-stack chess application that lets you play against the Maia Chess neural network.
+Maia Chess Centaur is a local, offline chess web application for playing against
+the Maia Chess neural network. It uses local Maia profiles at 1100, 1500, and 1900
+Elo through a FastAPI backend, `python-chess`, and a local Leela Chess Zero (`lc0`)
+engine.
 
-The application uses:
+The frontend uses React, Vite, Tailwind CSS v4, `chess.js`, and
+`react-chessboard`. Runtime communication is limited to the local frontend and
+backend. The application does not use Stockfish, cloud services, external APIs, or
+online accounts.
 
-- React and Vite for the frontend.
-- `react-chessboard` for the board UI.
-- `chess.js` for frontend move validation.
-- FastAPI for the backend API.
-- `python-chess` for backend chess and UCI communication.
-- A local Leela Chess Zero (`lc0`) executable.
-- Local Maia neural-network weights.
+## Current features
 
-No Stockfish or external chess APIs are used.
+- Play as White, Black, or Random.
+- Automatic board orientation based on the player's color.
+- Maia automatically makes the opening move when the player chooses Black.
+- Legal move validation through `chess.js`.
+- Undo that removes the appropriate player/Maia turn pair.
+- Queen, rook, bishop, and knight promotion selection.
+- Responsive Tailwind CSS v4 dark interface.
+- Side-by-side board and move history on larger screens.
+- Auto-scrolling move history.
+- Last-move highlighting.
+- Local game persistence under the versioned key
+  `maia_chess_saved_game_v1`.
+- Automatic saving of active-game PGN, Elo, color preference, player color, game
+  phase, and save timestamp.
+- Safe restoration of saved games after a page reload.
+- Explicit **Resume Maia Move** recovery when a reload occurs during Maia's turn.
+- **New Game** cancels active timers/requests, clears saved data, and returns to
+  setup.
+
+The standalone **Clear Saved Game** action that keeps the active board visible and
+shows a confirmation is planned for Step 2.1.3. Currently, New Game performs the
+reset and clearing behavior.
 
 ## Project structure
 
 ```text
 maia-chess-app/
 ├── backend/
-│   ├── engines/
+│   ├── engines/              # Local-only engine files; ignored by Git
 │   │   ├── lc0.exe
 │   │   ├── maia-1100.pb.gz
 │   │   ├── maia-1500.pb.gz
 │   │   └── maia-1900.pb.gz
 │   ├── main.py
-│   ├── requirements.txt
-│   └── venv/
+│   └── requirements.txt
 ├── frontend/
 │   ├── src/
 │   │   ├── App.jsx
+│   │   ├── index.css
 │   │   └── main.jsx
 │   ├── package.json
 │   └── package-lock.json
 └── README.md
 ```
 
-The files ending in `v1`, `v101`, or `v2` are historical versions and are not used by the active application.
+Legacy `Appv*.jsx` files are historical backups and are not active entry points.
+The active frontend entry point is [frontend/src/App.jsx](frontend/src/App.jsx),
+loaded by [frontend/src/main.jsx](frontend/src/main.jsx).
 
 ## Requirements
 
-Install these before running the project:
-
 - Windows
-- Python 3.11 or newer
+- Python 3.14.6 (verified with the current backend requirements)
 - Node.js 20 or newer
 - npm
-- A local `lc0.exe` executable
-- Maia weight files
+- A local `lc0` executable
+- Local Maia weight files
 
-The application itself is offline at runtime. The backend and frontend communicate only through `localhost`.
+The direct backend dependencies are listed in
+[backend/requirements.txt](backend/requirements.txt):
 
-## Required engine files
+```text
+fastapi==0.163.1
+uvicorn[standard]==0.54.0
+python-chess==1.999
+```
 
-The following files must exist:
+## Engine and Maia weight setup
+
+The engine executable and Maia `.pb.gz` files are local-only resources. They are
+ignored by Git and must be obtained and placed manually. They are not included in
+the source repository.
+
+The expected local paths are:
 
 ```text
 backend/engines/lc0.exe
@@ -62,66 +94,30 @@ backend/engines/maia-1500.pb.gz
 backend/engines/maia-1900.pb.gz
 ```
 
-The backend will stop during startup if `lc0.exe` is missing.
+Use a compatible local Windows build of `lc0` and obtain the Maia weights
+separately. Do not commit engine binaries, DLLs, or weight files.
 
-## First-time backend setup
+## First-time setup
 
-Open PowerShell in the project directory:
+### Backend
+
+From the project root:
 
 ```powershell
 cd C:\Spartan\vs_code\Projects\maia-chess-app\backend
-```
-
-Create a virtual environment if one does not already exist:
-
-```powershell
 python -m venv venv
-```
-
-Activate it:
-
-```powershell
 .\venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-If PowerShell blocks activation, run:
+If PowerShell blocks activation:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\venv\Scripts\Activate.ps1
 ```
 
-Install backend dependencies:
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-## Start the backend
-
-With the virtual environment activated:
-
-```powershell
-cd C:\Spartan\vs_code\Projects\maia-chess-app\backend
-.\venv\Scripts\Activate.ps1
-uvicorn main:app --reload
-```
-
-The backend runs at:
-
-```text
-http://127.0.0.1:8000
-```
-
-FastAPI's local API documentation is available at:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-Keep this terminal open while playing.
-
-## First-time frontend setup
+### Frontend
 
 Open a second PowerShell terminal:
 
@@ -130,38 +126,18 @@ cd C:\Spartan\vs_code\Projects\maia-chess-app\frontend
 npm install
 ```
 
-`package-lock.json` records the frontend dependency versions.
-
-## Start the frontend
-
-```powershell
-cd C:\Spartan\vs_code\Projects\maia-chess-app\frontend
-npm run dev
-```
-
-Open the URL printed by Vite, normally:
-
-```text
-http://localhost:5173
-```
-
-The frontend expects the backend at:
-
-```text
-http://127.0.0.1:8000
-```
-
-## Normal startup
-
-Every time you want to run the application:
+## Run locally
 
 ### Terminal 1: backend
 
 ```powershell
 cd C:\Spartan\vs_code\Projects\maia-chess-app\backend
 .\venv\Scripts\Activate.ps1
-uvicorn main:app --reload
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+The backend runs at `http://127.0.0.1:8000`. FastAPI's local documentation is
+available at `http://127.0.0.1:8000/docs`.
 
 ### Terminal 2: frontend
 
@@ -170,54 +146,56 @@ cd C:\Spartan\vs_code\Projects\maia-chess-app\frontend
 npm run dev
 ```
 
-Then open:
+Open the Vite URL, normally `http://localhost:5173`.
+
+The frontend defaults to `http://127.0.0.1:8000` for the backend. To override it,
+create a local environment file such as `frontend/.env.local`:
 
 ```text
-http://localhost:5173
+VITE_API_URL=http://127.0.0.1:8000
 ```
 
-## How the application works
+Environment files are ignored by Git.
 
-1. The user selects White, Black, or Random and starts a game.
-2. The user drags their piece on the React chessboard.
+## How a move works
+
+1. The player selects White, Black, or Random and starts a game.
+2. The player makes a move on the React chessboard.
 3. `chess.js` validates the move.
-4. The frontend creates the new FEN.
-5. The frontend sends the FEN and selected Maia Elo to FastAPI.
-6. FastAPI validates the FEN.
-7. FastAPI loads the requested local Maia weights into `lc0`.
-8. `lc0` searches one node.
-9. The backend returns a UCI move such as `e7e5`.
-10. The frontend validates and applies Maia's move.
-11. The move history and board update.
+4. The frontend sends the resulting FEN and selected Elo to FastAPI.
+5. FastAPI validates the FEN and selects the requested local Maia weights.
+6. `lc0` searches one node and returns a UCI move such as `e7e5`.
+7. The frontend validates and applies Maia's move.
+8. The board, status, and move history update.
 
-When the user selects Black, Maia makes the opening move automatically. The board
-orientation follows the player's color, and Undo removes the appropriate player
-and Maia moves together.
+## Persistence and recovery
 
-## Supported Maia profiles
-
-The current Elo selector supports:
+Active games are saved in browser `localStorage` as a versioned object containing:
 
 ```text
-1100
-1500
-1900
+schemaVersion
+pgn
+elo
+selectedColorPref
+playerColor
+gamePhase
+savedAt
 ```
 
-The corresponding files must exist in `backend/engines/`.
+Transient request state, timers, abort controllers, and thinking state are not
+stored. When a saved game is restored during Maia's turn, the app waits for an
+explicit **Resume Maia Move** action to avoid duplicate requests.
 
-## Frontend validation commands
+## Validation commands
 
-Run these from the `frontend` directory:
+Frontend, from `frontend/`:
 
 ```powershell
 npm run lint
 npm run build
 ```
 
-## Backend validation
-
-Run this from the project root:
+Backend, from the project root:
 
 ```powershell
 python -m py_compile backend\main.py
@@ -225,9 +203,10 @@ python -m py_compile backend\main.py
 
 ## Troubleshooting
 
-### Backend cannot start
+### Backend does not start
 
-Check that these files exist:
+Confirm that the virtual environment is activated and that all required local
+engine files exist:
 
 ```text
 backend/engines/lc0.exe
@@ -236,63 +215,50 @@ backend/engines/maia-1500.pb.gz
 backend/engines/maia-1900.pb.gz
 ```
 
-Also confirm that the virtual environment is activated.
+### The frontend shows an old interface
 
-### Frontend shows an old interface
-
-Check [frontend/src/main.jsx](frontend/src/main.jsx). It must import:
+Confirm [frontend/src/main.jsx](frontend/src/main.jsx) imports:
 
 ```js
 import App from './App.jsx'
 ```
 
-Then stop and restart Vite:
+Stop and restart Vite, then refresh with `Ctrl+F5`.
 
-```powershell
-Ctrl+C
-npm run dev
-```
+### Maia does not respond
 
-Refresh the browser with `Ctrl+F5`.
-
-### Board moves but Maia does not respond
-
-Check:
+Check that:
 
 1. The backend terminal is still running.
 2. The backend is listening on `http://127.0.0.1:8000`.
-3. `lc0.exe` and the Maia weight files exist.
-4. The browser console does not show a CORS or network error.
+3. `lc0.exe` and all Maia weights exist in `backend/engines/`.
+4. The browser console has no CORS or network error.
 
 ### Port already in use
 
-Backend:
+Start the backend on another port:
 
 ```powershell
-uvicorn main:app --reload --port 8001
+uvicorn main:app --reload --host 127.0.0.1 --port 8001
 ```
 
-If the backend port changes, update the frontend API URL before starting Vite.
+Then update `VITE_API_URL` before starting the frontend.
 
-## Current limitations
+## Current limitations: Phase 2.1 snapshot
 
-- Games are not yet saved across browser refreshes.
-- Tailwind CSS has not been added.
-- The Humanity Profiler has not been implemented.
-- The live evaluation bar has not been implemented.
-- The current backend returns Maia's selected move, not the full probability distribution.
+- A dedicated Clear Saved Game button is pending Step 2.1.3. New Game currently
+  performs the reset and storage-clearing behavior.
+- Storage serialization, validation, loading, and clearing still live in
+  `frontend/src/App.jsx`; extraction is planned for Step 2.1.4.
+- Vitest, React Testing Library, and pytest test suites are not yet installed.
+- Backend `/health` and `/ready` endpoints are not yet implemented.
+- Startup resource validation, bounded engine watchdogs, and crash recovery are
+  planned for Phase 2.2.
+- A one-command offline launcher is planned for Phase 2.4.
+- PGN import/export, clocks, sound effects, move analytics, and the Humanity
+  Profiler are Phase 3 features.
+- The backend currently returns Maia's selected move, not a verified full policy
+  probability distribution.
 
-## Planned future work
-
-Future phases may add:
-
-- Offline game persistence.
-- Tailwind-based styling.
-- Dark mode.
-- More advanced game history controls.
-- Humanity Profiler analytics.
-- Maia probability distributions.
-- Evaluation visualization.
-- Additional game configuration options.
-
-These features should preserve the local-only architecture.
+All future features must preserve the local-only architecture and must not add
+Stockfish or external runtime services.
