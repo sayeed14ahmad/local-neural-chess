@@ -1,88 +1,17 @@
 import { useState, useRef, useEffect } from "react";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
+import {
+  loadSavedGame,
+  saveGame,
+  clearSavedGameStorage,
+} from "./utils/gameStorage.js";
 
 const PROMOTION_PIECES = ["q", "r", "b", "n"];
-const STORAGE_KEY = "maia_chess_saved_game_v1";
-const SCHEMA_VERSION = 1;
-const VALID_ELOS = [1100, 1500, 1900];
-const VALID_COLOR_PREFS = ["white", "black", "random"];
-const VALID_PLAYER_COLORS = ["white", "black"];
 
 function assignPlayerColor(colorPreference) {
   if (colorPreference !== "random") return colorPreference;
   return Math.random() > 0.5 ? "white" : "black";
-}
-
-function clearSavedGameStorage() {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-    return { ok: true };
-  } catch (error) {
-    console.error("Failed to clear saved game:", error);
-    return { ok: false, error };
-  }
-}
-
-function loadSavedGame() {
-  const defaultState = {
-    game: new Chess(),
-    elo: 1100,
-    selectedColorPref: "white",
-    playerColor: "white",
-    gamePhase: "setup",
-    needsMaiaResume: false,
-    storageWarning: null,
-  };
-
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultState;
-
-    const parsed = JSON.parse(raw);
-    if (
-      !parsed ||
-      parsed.schemaVersion !== SCHEMA_VERSION ||
-      parsed.gamePhase !== "active" ||
-      !VALID_ELOS.includes(Number(parsed.elo)) ||
-      !VALID_COLOR_PREFS.includes(parsed.selectedColorPref) ||
-      !VALID_PLAYER_COLORS.includes(parsed.playerColor) ||
-      typeof parsed.pgn !== "string"
-    ) {
-      const clearResult = clearSavedGameStorage();
-      return {
-        ...defaultState,
-        storageWarning: clearResult.ok
-          ? null
-          : "Could not clear saved game from local storage.",
-      };
-    }
-
-    const restoredGame = new Chess();
-    if (parsed.pgn.trim().length > 0) {
-      restoredGame.loadPgn(parsed.pgn);
-    }
-
-    const playerTurnCode = parsed.playerColor === "white" ? "w" : "b";
-    const needsMaiaResume =
-      !restoredGame.isGameOver() && restoredGame.turn() !== playerTurnCode;
-
-    return {
-      game: restoredGame,
-      elo: Number(parsed.elo),
-      selectedColorPref: parsed.selectedColorPref,
-      playerColor: parsed.playerColor,
-      gamePhase: "active",
-      needsMaiaResume,
-    };
-  } catch (error) {
-    console.error("Failed to restore saved game:", error);
-    clearSavedGameStorage();
-    return {
-      ...defaultState,
-      storageWarning: "Game could not be saved locally.",
-    };
-  }
 }
 
 export default function App() {
@@ -123,7 +52,7 @@ export default function App() {
     }
   }, [game]);
 
-  // Auto-save active games to localStorage after initial state restoration.
+  // Auto-save active games after initial state restoration.
   useEffect(() => {
     if (!hasMountedAutosaveRef.current) {
       hasMountedAutosaveRef.current = true;
@@ -132,25 +61,22 @@ export default function App() {
 
     if (gamePhase !== "active") return;
 
-    try {
-      const payload = {
-        schemaVersion: SCHEMA_VERSION,
-        pgn: game.pgn(),
-        elo: Number(elo),
-        selectedColorPref,
-        playerColor,
-        gamePhase,
-        savedAt: new Date().toISOString(),
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    } catch (error) {
-      console.error("Failed to save game to localStorage:", error);
-      window.setTimeout(() => {
+    const result = saveGame({
+      game,
+      elo,
+      selectedColorPref,
+      playerColor,
+      gamePhase,
+    });
+
+    if (!result.ok) {
+      const timerId = setTimeout(() => {
         setStorageFeedback({
           text: "Game could not be saved locally.",
           type: "warning",
         });
       }, 0);
+      return () => clearTimeout(timerId);
     }
   }, [game, elo, selectedColorPref, playerColor, gamePhase]);
 
