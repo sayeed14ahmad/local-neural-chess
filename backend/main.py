@@ -9,6 +9,7 @@ from typing import Literal
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import chess
 import chess.engine
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENGINE_PATH = os.path.join(BASE_DIR, "engines", "lc0.exe")
+EloRating = Literal[1100, 1500, 1900]
+SUPPORTED_ELOS: tuple[EloRating, ...] = (1100, 1500, 1900)
 
 # 2. Add threading Lock to global state
 engine_state = {
@@ -77,6 +80,82 @@ class MoveResponse(BaseModel):
 class ErrorResponse(BaseModel):
     detail: str
     code: str | None = None
+
+
+class HealthResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+    service: str = "Maia Chess Centaur API"
+
+
+class ReadyResponse(BaseModel):
+    ready: bool
+    status: Literal["ready", "not_ready"]
+    engine_initialized: bool
+    engine_path_exists: bool
+    current_elo: EloRating | None
+    available_elos: list[EloRating]
+    missing_weights: list[str]
+    detail: str
+
+
+@app.get("/health", response_model=HealthResponse)
+def health_check() -> HealthResponse:
+    return HealthResponse()
+
+
+@app.get(
+    "/ready",
+    response_model=ReadyResponse,
+    responses={
+        200: {
+            "model": ReadyResponse,
+            "description": "Engine and all Maia weights are ready.",
+        },
+        503: {
+            "model": ReadyResponse,
+            "description": "Engine or required Maia weights are not ready.",
+        },
+    },
+)
+def readiness_check() -> ReadyResponse | JSONResponse:
+    engine_initialized = engine_state["process"] is not None
+    engine_path_exists = os.path.exists(ENGINE_PATH)
+
+    available_elos: list[EloRating] = []
+    missing_weights: list[str] = []
+    for elo in SUPPORTED_ELOS:
+        weight_path = os.path.join(BASE_DIR, "engines", f"maia-{elo}.pb.gz")
+        if os.path.exists(weight_path):
+            available_elos.append(elo)
+        else:
+            missing_weights.append(os.path.basename(weight_path))
+
+    is_ready = engine_initialized and engine_path_exists and not missing_weights
+
+    if is_ready:
+        detail = "Engine and all Maia weights are ready."
+    elif not engine_path_exists:
+        detail = f"Engine executable missing at {ENGINE_PATH}."
+    elif not engine_initialized:
+        detail = "Chess engine process is not initialized."
+    else:
+        detail = f"Missing Maia weight files: {', '.join(missing_weights)}."
+
+    payload = ReadyResponse(
+        ready=is_ready,
+        status="ready" if is_ready else "not_ready",
+        engine_initialized=engine_initialized,
+        engine_path_exists=engine_path_exists,
+        current_elo=engine_state["current_elo"],
+        available_elos=available_elos,
+        missing_weights=missing_weights,
+        detail=detail,
+    )
+
+    if not is_ready:
+        return JSONResponse(status_code=503, content=payload.model_dump())
+
+    return payload
 
 
 @app.post(
