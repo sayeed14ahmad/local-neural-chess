@@ -68,8 +68,36 @@ class MoveRequest(BaseModel):
     fen: str
     elo: Literal[1100, 1500, 1900] = 1100
 
-@app.post("/get-move")
-def get_move(request: MoveRequest):
+
+class MoveResponse(BaseModel):
+    best_move: str
+    elo_used: Literal[1100, 1500, 1900]
+
+
+class ErrorResponse(BaseModel):
+    detail: str
+    code: str | None = None
+
+
+@app.post(
+    "/get-move",
+    response_model=MoveResponse,
+    responses={
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid FEN or game already over.",
+        },
+        500: {
+            "model": ErrorResponse,
+            "description": "Missing weight file or engine failure.",
+        },
+        503: {
+            "model": ErrorResponse,
+            "description": "Chess engine unavailable.",
+        },
+    },
+)
+def get_move(request: MoveRequest) -> MoveResponse:
     # 4. Handle Finished Games Before Execution
     try:
         board = chess.Board(request.fen)
@@ -102,10 +130,10 @@ def get_move(request: MoveRequest):
             if result.move is None:
                 raise HTTPException(status_code=500, detail="Engine failed to return a move.")
             
-            return {
-                "best_move": result.move.uci(),
-                "elo_used": request.elo
-            }
+            return MoveResponse(
+                best_move=result.move.uci(),
+                elo_used=request.elo,
+            )
             
         except HTTPException:
             # Re-raise explicit HTTP exceptions (like the move=None check above)
