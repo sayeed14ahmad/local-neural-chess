@@ -5,6 +5,7 @@
 import os
 import logging
 import threading
+from dataclasses import dataclass
 from typing import Literal
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
@@ -19,7 +20,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ENGINE_PATH = os.path.join(BASE_DIR, "engines", "lc0.exe")
+ENGINES_DIR = os.path.join(BASE_DIR, "engines")
+ENGINE_PATH = os.path.join(ENGINES_DIR, "lc0.exe")
 EloRating = Literal[1100, 1500, 1900]
 SUPPORTED_ELOS: tuple[EloRating, ...] = (1100, 1500, 1900)
 
@@ -30,19 +32,95 @@ engine_state = {
     "lock": threading.Lock()
 }
 
+
+@dataclass(frozen=True)
+class EngineResourceDiagnostics:
+    engine_path_exists: bool
+    available_elos: list[EloRating]
+    missing_weights: list[str]
+    missing_weight_paths: list[str]
+    detail: str
+
+
+def get_weight_path(elo: EloRating) -> str:
+    return os.path.join(ENGINES_DIR, f"maia-{elo}.pb.gz")
+
+
+def inspect_engine_resources(engine_initialized: bool) -> EngineResourceDiagnostics:
+    engine_path_exists = os.path.isfile(ENGINE_PATH)
+    available_elos: list[EloRating] = []
+    missing_weights: list[str] = []
+    missing_weight_paths: list[str] = []
+
+    for elo in SUPPORTED_ELOS:
+        weight_path = get_weight_path(elo)
+        if os.path.isfile(weight_path):
+            available_elos.append(elo)
+        else:
+            missing_weights.append(os.path.basename(weight_path))
+            missing_weight_paths.append(weight_path)
+
+    if not engine_path_exists:
+        detail = (
+            f"Engine executable missing at {ENGINE_PATH}. "
+            f"Place lc0.exe in {ENGINES_DIR}."
+        )
+    elif not engine_initialized:
+        detail = "Chess engine process is not initialized."
+    elif missing_weights:
+        detail = (
+            f"Missing Maia weight files in {ENGINES_DIR}: "
+            f"{', '.join(missing_weights)}."
+        )
+    else:
+        detail = "Engine and all Maia weights are ready."
+
+    return EngineResourceDiagnostics(
+        engine_path_exists=engine_path_exists,
+        available_elos=available_elos,
+        missing_weights=missing_weights,
+        missing_weight_paths=missing_weight_paths,
+        detail=detail,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not os.path.exists(ENGINE_PATH):
-        raise RuntimeError(f"Engine executable missing. Check path: {ENGINE_PATH}")
-    
     engine_state["process"] = None
     engine_state["current_elo"] = None
-    logger.info("Booting lc0 engine process...")
+
+    diagnostics = inspect_engine_resources(engine_initialized=False)
+    if not diagnostics.engine_path_exists:
+        logger.error(diagnostics.detail)
+        raise RuntimeError(diagnostics.detail)
+
+    if not diagnostics.available_elos:
+        missing_list = ", ".join(diagnostics.missing_weight_paths)
+        message = (
+            "Critical failure: No Maia weight files found on startup. "
+            f"Expected at least one weight file in {ENGINES_DIR}. Missing: {missing_list}"
+        )
+        logger.error(message)
+        raise RuntimeError(message)
+
+    if diagnostics.missing_weights:
+        logger.warning(
+            "Partial Maia weight setup detected. Missing weight files: %s",
+            ", ".join(diagnostics.missing_weight_paths),
+        )
+
+    logger.info(
+        "Booting lc0 engine process from %s (available Elos: %s)...",
+        ENGINE_PATH,
+        diagnostics.available_elos,
+    )
     try:
         engine_state["process"] = chess.engine.SimpleEngine.popen_uci(ENGINE_PATH)
     except Exception as e:
-        logger.exception("Failed to start engine")
-        raise RuntimeError("Critical failure: Could not start chess engine.") from e
+        logger.exception("Failed to start lc0 engine process at %s", ENGINE_PATH)
+        raise RuntimeError(
+            f"Critical failure: Could not start chess engine at {ENGINE_PATH}."
+        ) from e
         
     yield 
     
@@ -119,37 +197,22 @@ def health_check() -> HealthResponse:
 )
 def readiness_check() -> ReadyResponse | JSONResponse:
     engine_initialized = engine_state["process"] is not None
-    engine_path_exists = os.path.exists(ENGINE_PATH)
-
-    available_elos: list[EloRating] = []
-    missing_weights: list[str] = []
-    for elo in SUPPORTED_ELOS:
-        weight_path = os.path.join(BASE_DIR, "engines", f"maia-{elo}.pb.gz")
-        if os.path.exists(weight_path):
-            available_elos.append(elo)
-        else:
-            missing_weights.append(os.path.basename(weight_path))
-
-    is_ready = engine_initialized and engine_path_exists and not missing_weights
-
-    if is_ready:
-        detail = "Engine and all Maia weights are ready."
-    elif not engine_path_exists:
-        detail = f"Engine executable missing at {ENGINE_PATH}."
-    elif not engine_initialized:
-        detail = "Chess engine process is not initialized."
-    else:
-        detail = f"Missing Maia weight files: {', '.join(missing_weights)}."
+    diagnostics = inspect_engine_resources(engine_initialized=engine_initialized)
+    is_ready = (
+        engine_initialized
+        and diagnostics.engine_path_exists
+        and not diagnostics.missing_weights
+    )
 
     payload = ReadyResponse(
         ready=is_ready,
         status="ready" if is_ready else "not_ready",
         engine_initialized=engine_initialized,
-        engine_path_exists=engine_path_exists,
+        engine_path_exists=diagnostics.engine_path_exists,
         current_elo=engine_state["current_elo"],
-        available_elos=available_elos,
-        missing_weights=missing_weights,
-        detail=detail,
+        available_elos=diagnostics.available_elos,
+        missing_weights=diagnostics.missing_weights,
+        detail=diagnostics.detail,
     )
 
     if not is_ready:
@@ -186,8 +249,9 @@ def get_move(request: MoveRequest) -> MoveResponse:
     if board.is_game_over():
         raise HTTPException(status_code=400, detail="Game is over; no legal moves available.")
         
-    weight_file = os.path.join(BASE_DIR, "engines", f"maia-{request.elo}.pb.gz")
-    if not os.path.exists(weight_file):
+    weight_file = get_weight_path(request.elo)
+    if not os.path.isfile(weight_file):
+        logger.error("Requested Elo %s weight file missing at %s", request.elo, weight_file)
         raise HTTPException(status_code=500, detail="Requested Elo weight file is missing on the server.")
 
     # 5. Guard for Uninitialized Engine
