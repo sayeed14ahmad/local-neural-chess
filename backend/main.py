@@ -24,6 +24,8 @@ ENGINES_DIR = os.path.join(BASE_DIR, "engines")
 ENGINE_PATH = os.path.join(ENGINES_DIR, "lc0.exe")
 EloRating = Literal[1100, 1500, 1900]
 SUPPORTED_ELOS: tuple[EloRating, ...] = (1100, 1500, 1900)
+ENGINE_MOVE_NODES = 1
+ENGINE_MOVE_TIMEOUT_SEC = 5.0
 
 # 2. Add threading Lock to global state
 engine_state = {
@@ -237,6 +239,10 @@ def readiness_check() -> ReadyResponse | JSONResponse:
             "model": ErrorResponse,
             "description": "Chess engine unavailable.",
         },
+        504: {
+            "model": ErrorResponse,
+            "description": "Engine timed out during move calculation.",
+        },
     },
 )
 def get_move(request: MoveRequest) -> MoveResponse:
@@ -254,21 +260,34 @@ def get_move(request: MoveRequest) -> MoveResponse:
         logger.error("Requested Elo %s weight file missing at %s", request.elo, weight_file)
         raise HTTPException(status_code=500, detail="Requested Elo weight file is missing on the server.")
 
-    # 5. Guard for Uninitialized Engine
+    # 5. Fast guard for an uninitialized engine
     engine = engine_state["process"]
     if engine is None:
         logger.error("Engine process is None during request.")
         raise HTTPException(status_code=503, detail="Chess engine is currently unavailable.")
 
-    # 6. Thread-Safe Engine Operations
+    # 6. Thread-safe bounded engine operations
     with engine_state["lock"]:
+        engine = engine_state["process"]
+        if engine is None:
+            logger.error("Engine process became None while waiting for lock.")
+            raise HTTPException(status_code=503, detail="Chess engine is currently unavailable.")
+
         try:
             if engine_state["current_elo"] != request.elo:
-                logger.info(f"Swapping engine weights to Elo {request.elo}...")
-                engine.configure({"WeightsFile": weight_file})
+                logger.info("Swapping engine weights to Elo %s...", request.elo)
+                try:
+                    engine.configure({"WeightsFile": weight_file})
+                except Exception:
+                    engine_state["current_elo"] = None
+                    raise
                 engine_state["current_elo"] = request.elo
-            
-            result = engine.play(board, chess.engine.Limit(nodes=1))
+
+            search_limit = chess.engine.Limit(
+                nodes=ENGINE_MOVE_NODES,
+                time=ENGINE_MOVE_TIMEOUT_SEC,
+            )
+            result = engine.play(board, search_limit)
             
             if result.move is None:
                 raise HTTPException(status_code=500, detail="Engine failed to return a move.")
@@ -279,10 +298,22 @@ def get_move(request: MoveRequest) -> MoveResponse:
             )
             
         except HTTPException:
-            # Re-raise explicit HTTP exceptions (like the move=None check above)
             raise
+        except TimeoutError:
+            logger.exception("Engine timed out after %.1f seconds", ENGINE_MOVE_TIMEOUT_SEC)
+            raise HTTPException(
+                status_code=504,
+                detail="Engine timed out during move calculation.",
+            )
+        except chess.engine.EngineTerminatedError:
+            logger.exception("Chess engine process terminated during move calculation.")
+            engine_state["process"] = None
+            engine_state["current_elo"] = None
+            raise HTTPException(
+                status_code=503,
+                detail="Chess engine is currently unavailable.",
+            )
         except Exception:
-            # Use logger.exception to automatically capture the full stack trace
             logger.exception("Engine processing error")
             raise HTTPException(
                 status_code=500,
